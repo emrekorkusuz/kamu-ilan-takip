@@ -1,0 +1,39 @@
+name: Kamu İlan Takip
+
+on:
+  schedule:
+    # GitHub Actions zamanlaması yoğunluğa göre birkaç dakika gecikebilir.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  takip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repo indir
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bağımlılıkları kur
+        run: pip install -r requirements.txt
+
+      - name: İlanları kontrol et
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      - name: Görülen ilanları kaydet
+        run: |
+          git config user.name "kamu-ilan-bot"
+          git config user.email "actions@github.com"
+          git add seen.json
+          git diff --cached --quiet || git commit -m "İlan takip hafızasını güncelle"
+          git push
