@@ -228,11 +228,4 @@ def main():
     print(f"Toplam taranan: {len(all_items)}, yeni uygun ilan: {len(new_relevant)}")
 
 if __name__ == "__main__":
-    # Test amaçlı anlık mesaj gönderimi (Doğrulama için):
-    try:
-        telegram_send("🚀 Test Bildirimi: Botunuz ve 4 kaynaklı tarama sistemi sorunsuz çalışıyor!")
-        print("Test mesajı yollandı.")
-    except Exception as e:
-        print("Test mesajı hatası:", e)
-
     main()
