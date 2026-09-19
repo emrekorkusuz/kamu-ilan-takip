@@ -8,6 +8,12 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
+# ==========================================
+# TEST MODU AYARI
+# Test etmek için True yapın. Normal kullanımda False yapın.
+TEST_MODE = True  
+# ==========================================
+
 OSYM_URL = "https://www.osym.gov.tr/"
 KARIYER_URL = "https://kariyerkapisi.gov.tr/isealim"
 RESMI_GAZETE_URL = "https://www.resmigazete.gov.tr/cesitli-ilanlar"
@@ -64,15 +70,10 @@ def save_seen(seen):
         json.dump(values, f, ensure_ascii=False, indent=2)
 
 def extract_meta_info(text):
-    """Metin içerisinden tarih, şehir, KPSS ve nitelik kodlarını ayıklar."""
-    # Nitelik Kodları (4 haneli sayılar)
+    """Metin içerisinden tarih, KPSS ve nitelik kodlarını ayıklar."""
     found_codes = list(set(re.findall(r"\b(4\d{3}|6225)\b", text)))
-    
-    # Tarih Yakalama (GG.AA.YYYY veya GG/AA/YYYY)
     dates = re.findall(r"\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b", text)
     deadline = dates[-1] if dates else "Belirtilmedi"
-    
-    # KPSS Şartı
     kpss_found = "KPSS P3" if "p3" in text.lower() else ("KPSS Var" if "kpss" in text.lower() else "Belirtilmedi")
     
     return {
@@ -98,13 +99,9 @@ def analyze_relevance(title, text):
     has_tech_code = any(code in meta["codes"] for code in TECH_QUALIFICATION_CODES)
     has_gen_code = any(code in meta["codes"] for code in GENERAL_QUALIFICATION_CODES)
 
-    # 1. KESİN UYGUNLUK MANTIĞI
-    # Bilişim Unvanı VEYA Bilişim Nitelik Kodu içerip Lisans/KPSS şartı barındıranlar
     if (has_tech_title or has_tech_code) and (has_education or has_kpss or has_gen_code):
         return "MATCH", meta
 
-    # 2. GENİŞ TAKİP MANTIĞI
-    # Zabıta, Büro Personeli vb. genel kadrolar
     if has_sec_title or has_gen_code:
         return "REVIEW", meta
 
@@ -193,7 +190,7 @@ def telegram_send(message, url=None):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID GitHub Secrets olarak ayarlanmalı.")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID GitHub Secrets (veya Environment Variable) olarak tanımlanmamış!")
 
     api_url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
@@ -230,7 +227,34 @@ def format_message(item, status, meta):
         f"📅 <b>Son Başvuru (Tahmini):</b> {meta['deadline']}\n"
     )
 
+def run_test():
+    """Telegram API ve Bot Entegrasyonu Test Fonksiyonu"""
+    print("🧪 TEST MODU AKTİF: Test mesajı gönderiliyor...")
+    test_item = {
+        "title": "Çevre ve Şehircilik Bakanlığı - Programcı ve VHKİ Alım İlanı (TEST MESAJI)",
+        "source": "ÖSYM (Test)",
+        "url": "https://www.osym.gov.tr"
+    }
+    test_meta = {
+        "codes": ["4539", "4001", "6225"],
+        "deadline": "31.12.2026",
+        "kpss": "KPSS P3"
+    }
+    
+    msg = format_message(test_item, "MATCH", test_meta)
+    msg = "🧪 <b>[TEST SİSTEMİ BİLDİRİMİ]</b>\nBot bağlantınız ve bildirim şablonunuz başarıyla çalışıyor!\n\n" + msg
+    
+    try:
+        telegram_send(msg, url=test_item['url'])
+        print("✅ TEST BAŞARILI: Telegram'a test bildirim mesajı gönderildi.")
+    except Exception as exc:
+        print(f"❌ TEST BAŞARISIZ: Telegram mesajı gönderilemedi! Hata: {exc}")
+
 def main():
+    # Test Modu Kontrolü
+    if TEST_MODE:
+        run_test()
+
     seen = load_seen()
     all_items = []
 
@@ -261,7 +285,7 @@ def main():
                 print("Telegram bildirimi başarısız:", exc)
     else:
         current_hour = datetime.now(timezone.utc).hour
-        if current_hour == 18:
+        if current_hour == 18 and not TEST_MODE:
             now_str = datetime.now(timezone.utc).strftime("%d.%m.%Y")
             info_msg = (
                 f"<b>ℹ️ Günlük Rapor ({now_str})</b>\n\n"
