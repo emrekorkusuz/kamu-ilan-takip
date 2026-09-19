@@ -14,26 +14,26 @@ RESMI_GAZETE_URL = "https://www.resmigazete.gov.tr/cesitli-ilanlar"
 ILANGOV_URL = "https://www.ilan.gov.tr/ilan/kategori/20/personel-alimi-ve-akademik-kadro-ilanlari"
 STATE_FILE = "seen.json"
 
-# Bilişim Sistemleri ve Teknolojileri (Lisans) + Zabıta / Genel Alım Filtreleri
-PROFILE_KEYWORDS = [
-    # Bilişim / Teknik Unvanlar
-    "bilişim", "bilgisayar", "yazılım", "veri hazırlama",
-    "veri hazırlama ve kontrol işletmeni", "vhki",
-    "bilgisayar işletmeni", "programcı", "tekniker", "teknisyen",
-    "sistem analisti", "ağ yöneticisi", "sistem uzmanı", "çözümleyici",
+# --- FİLTRE VE KOD TANIMLARI ---
 
-    # Genel Alımlar / Zabıta / Büro / Düz Memurluk
-    "zabıta", "zabıta memuru", "itfaiye", "itfaiye eri",
-    "büro personeli", "memur", "icra müdür", "gümrük", 
-    "koruma ve güvenlik", "idari personel",
+# Bilişim/Yazılım Lisans Nitelik Kodları
+TECH_QUALIFICATION_CODES = ["4539", "4531", "4532", "4533", "4535", "4537"]
+# Genel Lisans Kodları
+GENERAL_QUALIFICATION_CODES = ["4001", "6225"]
 
-    # ÖSYM Nitelik Kodları (Lisans Bilişim Sistemleri & Genel)
-    "4539", "4531", "4532", "4533", "4535",
-    "4001"
+PRIMARY_TITLES = [
+    "bilişim", "bilgisayar", "yazılım", "veri hazırlama", 
+    "vhki", "programcı", "tekniker", "sistem analisti", 
+    "ağ yöneticisi", "sistem uzmanı", "çözümleyici"
+]
+
+SECONDARY_TITLES = [
+    "zabıta", "itfaiye", "büro personeli", "memur", 
+    "icra müdür", "gümrük", "koruma ve güvenlik", "idari personel"
 ]
 
 EDUCATION_KEYWORDS = ["lisans", "4 yıllık", "dört yıllık", "fakülte", "üniversite"]
-KPSS_KEYWORDS = ["kpss", "p3", "2024 kpss", "2026 kpss"]
+KPSS_KEYWORDS = ["kpss", "p3", "kpssp3"]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -63,11 +63,52 @@ def save_seen(seen):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(values, f, ensure_ascii=False, indent=2)
 
-def is_relevant(title, text):
+def extract_meta_info(text):
+    """Metin içerisinden tarih, şehir, KPSS ve nitelik kodlarını ayıklar."""
+    # Nitelik Kodları (4 haneli sayılar)
+    found_codes = list(set(re.findall(r"\b(4\d{3}|6225)\b", text)))
+    
+    # Tarih Yakalama (GG.AA.YYYY veya GG/AA/YYYY)
+    dates = re.findall(r"\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b", text)
+    deadline = dates[-1] if dates else "Belirtilmedi"
+    
+    # KPSS Şartı
+    kpss_found = "KPSS P3" if "p3" in text.lower() else ("KPSS Var" if "kpss" in text.lower() else "Belirtilmedi")
+    
+    return {
+        "codes": found_codes,
+        "deadline": deadline,
+        "kpss": kpss_found
+    }
+
+def analyze_relevance(title, text):
+    """
+    1. Kesin Uygunluk (MATCH)
+    2. Geniş Takip (REVIEW)
+    3. Uygun Değil (NONE)
+    """
     blob = normalize(f"{title} {text}").lower()
-    has_profile = any(k in blob for k in PROFILE_KEYWORDS)
-    has_education_or_kpss = any(k in blob for k in EDUCATION_KEYWORDS + KPSS_KEYWORDS)
-    return has_profile or (has_profile and has_education_or_kpss)
+    
+    has_tech_title = any(k in blob for k in PRIMARY_TITLES)
+    has_sec_title = any(k in blob for k in SECONDARY_TITLES)
+    has_education = any(k in blob for k in EDUCATION_KEYWORDS)
+    has_kpss = any(k in blob for k in KPSS_KEYWORDS)
+    
+    meta = extract_meta_info(text)
+    has_tech_code = any(code in meta["codes"] for code in TECH_QUALIFICATION_CODES)
+    has_gen_code = any(code in meta["codes"] for code in GENERAL_QUALIFICATION_CODES)
+
+    # 1. KESİN UYGUNLUK MANTIĞI
+    # Bilişim Unvanı VEYA Bilişim Nitelik Kodu içerip Lisans/KPSS şartı barındıranlar
+    if (has_tech_title or has_tech_code) and (has_education or has_kpss or has_gen_code):
+        return "MATCH", meta
+
+    # 2. GENİŞ TAKİP MANTIĞI
+    # Zabıta, Büro Personeli vb. genel kadrolar
+    if has_sec_title or has_gen_code:
+        return "REVIEW", meta
+
+    return "NONE", meta
 
 # --- SCRAPER FONKSİYONLARI ---
 
@@ -146,7 +187,7 @@ def dedupe(items):
             out.append(x)
     return out
 
-# --- TELEGRAM GÖNDERİM ---
+# --- TELEGRAM VE BİLDİRİM ---
 
 def telegram_send(message, url=None):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -162,7 +203,6 @@ def telegram_send(message, url=None):
         "disable_web_page_preview": False
     }
     
-    # Buton ekleme (Varsa ilana yönlendiren buton basar)
     if url:
         payload["reply_markup"] = json.dumps({
             "inline_keyboard": [[{"text": "🔗 İlana Git", "url": url}]]
@@ -171,21 +211,29 @@ def telegram_send(message, url=None):
     r = requests.post(api_url, data=payload, timeout=30)
     r.raise_for_status()
 
-def format_message(item):
+def format_message(item, status, meta):
     title = item['title'].replace("<", "&lt;").replace(">", "&gt;")
-    text = item['text'][:600].replace("<", "&lt;").replace(">", "&gt;")
+    codes_str = ", ".join(meta["codes"]) if meta["codes"] else "Metinde Kod Saptanmadı"
+    
+    if status == "MATCH":
+        header = "🚨 <b>SANA UYGUN YENİ KAMU İLANI</b>"
+    else:
+        header = "⚠️ <b>KONTROL ET: GENEL / ALTERNATİF İLAN</b>"
+
     return (
-        "<b>📢 YENİ KAMU İLANI</b>\n\n"
-        f"<b>🏛️ Kaynak:</b> {item['source']}\n"
-        f"<b>📌 Başlık:</b> {title}\n\n"
-        f"<b>📋 Detay:</b>\n{text}\n"
+        f"{header}\n\n"
+        f"🏛️ <b>Kurum/Kaynak:</b> {item['source']}\n"
+        f"📌 <b>Kadro/Başlık:</b> {title}\n"
+        f"🎓 <b>Öğrenim:</b> Lisans\n"
+        f"📊 <b>KPSS:</b> {meta['kpss']}\n"
+        f"🔢 <b>Nitelik Kodları:</b> {codes_str}\n"
+        f"📅 <b>Son Başvuru (Tahmini):</b> {meta['deadline']}\n"
     )
 
 def main():
     seen = load_seen()
     all_items = []
 
-    # 4 Kaynağı da tara
     for scraper in (scrape_osym, scrape_kariyer, scrape_resmi_gazete, scrape_ilan_gov):
         try:
             all_items.extend(scraper())
@@ -199,25 +247,25 @@ def main():
             continue
 
         seen.add(fid)
-        if is_relevant(item["title"], item["text"]):
-            new_relevant.append(item)
+        status, meta = analyze_relevance(item["title"], item["text"])
+        
+        if status in ("MATCH", "REVIEW"):
+            new_relevant.append((item, status, meta))
 
-    # İlan varsa gönder
     if new_relevant:
-        for item in new_relevant:
+        for item, status, meta in new_relevant:
             try:
-                telegram_send(format_message(item), url=item['url'])
+                telegram_send(format_message(item, status, meta), url=item['url'])
                 print("Bildirildi:", item["title"])
             except Exception as exc:
                 print("Telegram bildirimi başarısız:", exc)
     else:
-        # Bildirim kirliliğini önlemek için bilgilendirme mesajını sadece akşam 18:00 - 20:00 UTC arasında atar
         current_hour = datetime.now(timezone.utc).hour
         if current_hour == 18:
             now_str = datetime.now(timezone.utc).strftime("%d.%m.%Y")
             info_msg = (
                 f"<b>ℹ️ Günlük Rapor ({now_str})</b>\n\n"
-                f"Sistem bugün aktif çalıştı. Taranan kaynaklarda şartlarınıza uyan yeni bir ilan henüz yayınlanmadı."
+                f"Sistem bugün aktif çalıştı. Taranan kaynaklarda kriterlerinize uyan yeni bir ilan bulunamadı."
             )
             try:
                 telegram_send(info_msg)
@@ -225,7 +273,7 @@ def main():
                 print("Bilgi mesajı gönderilemedi:", exc)
 
     save_seen(seen)
-    print(f"Toplam taranan: {len(all_items)}, yeni uygun ilan: {len(new_relevant)}")
+    print(f"Toplam taranan: {len(all_items)}, yeni bildirim: {len(new_relevant)}")
 
 if __name__ == "__main__":
     main()
