@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 # ==========================================
 # TEST MODU AYARI
 # Test etmek için True yapın. Normal kullanımda False yapın.
-TEST_MODE = True  
+TEST_MODE = False  
 # ==========================================
 
 OSYM_URL = "https://www.osym.gov.tr/"
